@@ -1,0 +1,1466 @@
+COMPLETE CODEX PROMPT
+
+CRIE AI_CRYPTO_TRADER v5.0 ENTERPRISE - GRUPO 1/7
+FOCO: SETUP + DATA ENGINE PRODUCTION-GRADE
+ASSETS: ['BTCUSDT', 'ETHUSDT', 'XRPUSDT'] | Binance Testnet 24/7
+UI mínima (console primeiro). Backend 100% funcional.
+
+## 🎯 PARTE 1: HEADER + CONFIGURAÇÃO
+
+ESTRUTURA ARQUIVOS (inicial):
+text
+ai_crypto_trader/
+├── core/
+│   ├── __init__.py
+│   └── data_engine.py     ← CRIE AGORA
+├── config.py              ← CRIE AGORA
+├── .env.example
+├── requirements.txt
+└── main.py (stub inicial)
+
+REQUIREMENTS EXATOS (cópia exata):
+text
+ccxt==4.3.0
+pycoingecko==3.1.0
+newsapi-python==0.2.7
+anthropic==0.34.2
+pandas==2.2.0
+numpy==1.26.0
+TA-Lib==0.4.28
+scikit-learn==1.5.0
+torch==2.4.0
+transformers==4.44.0
+python-dotenv==1.0.0
+redis==5.0.0
+chromadb==0.5.0
+stable-baselines3[extra]==2.3.2
+optuna==3.6.0
+psycopg2-binary==2.9.9
+streamlit==1.38.0  # UI opcional
+plotly==5.22.0
+
+CONFIG.PY (com .env loader):
+python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Config:
+    ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+    NEWS_API_KEY = os.getenv('NEWS_API_KEY')
+    BINANCE_TESTNET_KEY = os.getenv('BINANCE_TESTNET_KEY')
+    BINANCE_TESTNET_SECRET = os.getenv('BINANCE_TESTNET_SECRET')
+    INITIAL_CAPITAL_USD = float(os.getenv('INITIAL_CAPITAL_USD', 10000))
+    MAX_RISK_PER_TRADE = 0.01  # 1%
+    CONFIDENCE_THRESHOLD = 0.65
+    ASSETS = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT']
+
+🛠️ PARTE 2: DATA ENGINE (72 FEATURES PROFISSIONAL)
+text
+CRIE core/data_engine.py COMPLETO E FUNCIONAL:
+
+class DataEngine:
+    def __init__(self):
+        self.coingecko = CoinGeckoAPI()
+        self.binance = ccxt.binance({
+            'apiKey': Config.BINANCE_TESTNET_KEY,
+            'secret': Config.BINANCE_TESTNET_SECRET,
+            'sandbox': True,  # TESTNET
+            'enableRateLimit': True,
+        })
+        self.news_client = NewsApiClient(api_key=Config.NEWS_API_KEY)
+        self.cache = {}  # Redis stub (memória por agora)
+        
+    def get_ohlcv(self, symbol, timeframe='1m', limit=200):
+        """CoinGecko histórico + Binance realtime"""
+        # CoinGecko para histórico profundo
+        if limit > 100:
+            hist = self.coingecko.get_coin_ohlc_by_id(
+                id=symbol.replace('USDT','').lower(),
+                vs_currency='usd',
+                days=limit//60+1
+            )
+            df = pd.DataFrame(hist, columns=['timestamp','open','high','low','close','volume'])
+        else:
+            # Binance realtime
+            ohlcv = self.binance.fetch_ohlcv(symbol, timeframe, limit=limit)
+            df = pd.DataFrame(ohlcv, columns=['timestamp','open','high','low','close','volume'])
+        
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        return df.set_index('timestamp').sort_index()
+    
+    def get_features(self, symbol):
+        """72 FEATURES PROFISSIONAIS"""
+        df = self.get_ohlcv(symbol, limit=200)
+        
+        # 28 INDICADORES TA-LIB
+        ta_features = {
+            'rsi_14': talib.RSI(df['close'], 14),
+            'rsi_21': talib.RSI(df['close'], 21),
+            'macd': talib.MACD(df['close'])[0][-1],
+            'macd_signal': talib.MACD(df['close'])[1][-1],
+            'bb_upper': talib.BBANDS(df['close'], timeperiod=20)[0][-1],
+            'bb_lower': talib.BBANDS(df['close'], timeperiod=20)[2][-1],
+            'bb_position': (df['close'].iloc[-1] - talib.BBANDS(df['close'], 20)[2][-1]) / 
+                          (talib.BBANDS(df['close'], 20)[0][-1] - talib.BBANDS(df['close'], 20)[2][-1]),
+            'atr_14': talib.ATR(df['high'], df['low'], df['close'], 14)[-1],
+            'stoch_k': talib.STOCH(df['high'], df['low'], df['close'])[0][-1],
+            'adx_14': talib.ADX(df['high'], df['low'], df['close'], 14)[-1],
+            'cci_20': talib.CCI(df['high'], df['low'], df['close'], 20)[-1],
+            'obv': talib.OBV(df['close'], df['volume'])[-1],
+            'mfi_14': talib.MFI(df['high'], df['low'], df['close'], df['volume'], 14)[-1],
+            # +15 outros... (implemente todos)
+        }
+        
+        # 15 PRICE/VOLATILITY
+        price_features = {
+            'roc_1m': df['close'].pct_change(1).iloc[-1],
+            'roc_5m': df['close'].pct_change(5).iloc[-1],
+            'hv_20': df['close'].pct_change().rolling(20).std() * np.sqrt(1440),  # Annualizado
+            'hv_60': df['close'].pct_change().rolling(60).std() * np.sqrt(1440),
+        }
+        
+        # ORDERBOOK (Binance depth)
+        orderbook = self.binance.fetch_order_book(symbol, limit=10)
+        ob_features = {
+            'bid_volume': sum([bid[1] for bid in orderbook['bids']]),
+            'ask_volume': sum([ask[1] for ask in orderbook['asks']]),
+            'imbalance': (sum([bid[1] for bid in orderbook['bids']]) - 
+                         sum([ask[1] for ask in orderbook['asks']])) / 
+                         (sum([bid[1] for bid in orderbook['bids']]) + 
+                          sum([ask[1] for ask in orderbook['asks']])),
+            'spread_pct': ((orderbook['asks'][0][0] - orderbook['bids'][0][0]) / 
+                          orderbook['bids'][0][0] * 100)
+        }
+        
+        # NEWS SENTIMENT (últimas 4h)
+        news = self.news_client.get_everything(
+            q=symbol.replace('USDT',''),
+            from_param=(datetime.now()-timedelta(hours=4)).strftime('%Y-%m-%d'),
+            language='en',
+            sort_by='publishedAt'
+        )
+        sentiment = self.get_news_sentiment(news['articles'][:5])  # Claude
+        
+        return {
+            **ta_features, **price_features, **ob_features,
+            'sentiment': sentiment,
+            'latest_news': news['articles'][0]['title'] if news['articles'] else ''
+        }
+    
+    def get_news_sentiment(self, articles):
+        """Claude sentiment score -1 a +1"""
+        # Stub: implemente com Anthropic API
+        return 0.0  # Placeholder
+
+TESTE IMEDIATO:
+python
+# main.py stub
+from core.data_engine import DataEngine
+engine = DataEngine()
+features = engine.get_features('BTCUSDT')
+print(features)  # Deve printar 72 features
+
+## 🧠 PARTE 3.1: CHRONOS T5 TIME SERIES FORECASTING
+
+class ChronosForecaster:
+def init(self):
+self.model = None
+self.load_pretrained()
+text
+def load_pretrained(self):
+    """Nixtla Chronos-T5 pre-trained para previsão 1min crypto"""
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    model_name = "nixtla/chronos-t5-small"  # Ou large para mais precisão
+    self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+    self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+
+def forecast(self, df_ohlcv, horizon=):[1][2]
+    """Previsão preço próximo 5/15/60min"""
+    # Converter OHLCV para formato Chronos (log returns)
+    prices = np.log1p(df_ohlcv['close'].tail(512).values)
+    predictions = {}
+    
+    for h in horizon:
+        # Tokenizar sequência
+        inputs = self.tokenizer(prices.astype(np.float32), 
+                              return_tensors="pt", padding=True)
+        
+        # Gerar previsão
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, max_length=h+10)
+        
+        pred_prices = self.tokenizer.decode(outputs, skip_special_tokens=True)
+        pred_logret = np.fromstring(pred_prices.replace('[PAD]', ''), sep=' ')
+        predictions[f'{h}min'] = np.expm1(pred_logret[-h:].mean())  # % change
+    
+    return predictions
+
+text
+
+## 🧠 PARTE 3.2: CLAUDE 3.5 AGENTIC DECISION MAKER
+
+class ClaudeDecisionMaker:
+def init(self):
+self.client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+self.model = "claude-3-5-sonnet-20241022"
+text
+def analyze_market(self, symbol, features, memory_data):
+    """Chain-of-Thought NUMÉRICO exato para trading"""
+    
+    PROMPT_TEMPLATE = """
+    Você é TJR CRYPTO, 12 anos daytrading BTC/ETH/XRP com Sharpe 2.8 histórico.
+    
+    ANALISE PASSO-A-PASSO com números EXATOS:
+    
+    1. MERCADO ATUAL: Regime={regime} | HV20={hv20:.1f}% | Funding={funding:.2f}%
+    2. TÉCNICO: RSI14={rsi14:.1f} | RSI21={rsi21:.1f} | MACD={macd:.4f} 
+       BB_pos={bb_pos:.2f} | ATR={atr:.4f} | ADX={adx:.1f}
+    3. ORDERBOOK: Imbalance={imbalance:.1f}% | Spread={spread:.2f}%
+    4. SENTIMENT: News={sentiment:.2f} | "{latest_news}"
+    5. MEMÓRIA: {similar_winrate:.1f}% winrate em {sample_size} trades similares
+       Regime Sharpe últimos 30d: {regime_sharpe:.2f}
+    
+    DECISÃO FINAL (números exatos):
+    SINAL: BUY/SELL/HOLD
+    CONFIANÇA: {0-100}%
+    STOP_LOSS: {preço exato ou % abaixo}
+    TARGET: {preço exato ou % acima}
+    POSITION_SIZE: {0.1-1.0}% do capital
+    RAZÃO: 1 frase técnica
+    
+    FORMATO JSON EXATO:
+    {{
+        "signal": "BUY",
+        "confidence": 0.87,
+        "stop_loss": 42500.0,
+        "target": 43200.0,
+        "position_size": 0.008,
+        "reason": "RSI divergência + OBV breakout"
+    }}
+    """
+    
+    # Format com dados reais
+    prompt = PROMPT_TEMPLATE.format(
+        regime=features.get('regime', 'unknown'),
+        hv20=features.get('hv_20', 0)*100,
+        funding=features.get('funding_rate', 0),
+        rsi14=features.get('rsi_14', 50),
+        rsi21=features.get('rsi_21', 50),
+        macd=features.get('macd', 0),
+        bb_pos=features.get('bb_position', 0.5),
+        atr=features.get('atr_14', 0),
+        adx=features.get('adx_14', 20),
+        imbalance=features.get('imbalance', 0)*100,
+        spread=features.get('spread_pct', 0),
+        sentiment=features.get('sentiment', 0),
+        latest_news=features.get('latest_news', ''),
+        similar_winrate=memory_data.get('similar_winrate', 50),
+        sample_size=memory_data.get('sample_size', 0),
+        regime_sharpe=memory_data.get('regime_sharpe', 1.0)
+    )
+    
+    response = self.client.messages.create(
+        model=self.model,
+        max_tokens=500,
+        temperature=0.1,
+        system="Você é um day trader quantitativo profissional.",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    
+    # Parse JSON da resposta
+    import json, re
+    json_str = re.search(r'\{.*\}', response.content.text, re.DOTALL)
+    return json.loads(json_str.group()) if json_str else {}
+
+text
+
+## 🧠 PARTE 3.3: PPO REINFORCEMENT LEARNING
+
+class PPOTrader:
+def init(self):
+self.env = TradingEnv() # Custom Gym environment
+self.model = PPO("MlpPolicy", self.env, verbose=0)
+self.replay_buffer = []
+text
+def predict(self, features):
+    """Predição PPO com 72 features"""
+    state = np.array(list(features.values())[:72])  # Primeiras 72 features
+    state = state.reshape(1, -1)
+    action, _states = self.model.predict(state, deterministic=True)
+    return self.decode_action(action)
+
+def daily_retrain(self):
+    """Retrain com últimos 1000 episodes"""
+    if len(self.replay_buffer) > 100:
+        # Sample batch para efficiency
+        batch = random.sample(self.replay_buffer, 100)
+        for episode in batch:
+            self.model.learn(total_timesteps=1, reset_num_timesteps=False)
+
+def decode_action(self, action_idx):
+    """Actions: [buy_0.25%, buy_0.5%, buy_1%, sell_0.25%, ... hold]"""
+    actions = ['buy_0.25', 'buy_0.5', 'buy_1.0', 'sell_0.25', 'sell_0.5', 'sell_1.0', 'hold']
+    return actions[action_idx % len(actions)]
+
+STUB TradingEnv para compilação (implementar GRUPO 4)
+class TradingEnv(gym.Env):
+def init(self):
+self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(72,))
+self.action_space = spaces.Discrete(7)
+pass
+text
+
+TESTE IMEDIATO:
+
+Adicione ao main.py:
+from core.ensemble import ChronosForecaster, ClaudeDecisionMaker, PPOTrader
+engine = DataEngine()
+features = engine.get_features('BTCUSDT')
+forecaster = ChronosForecaster()
+pred = forecaster.forecast(engine.get_ohlcv('BTCUSDT'))
+claude = ClaudeDecisionMaker()
+decision = claude.analyze_market('BTCUSDT', features, {"similar_winrate":60})
+ppo = PPOTrader()
+ppo_action = ppo.predict(features)
+print("Chronos:", pred)
+print("Claude:", decision)
+print("PPO:", ppo_action)
+
+text
+CRIE AI_CRYPTO_TRADER v5.0 ENTERPRISE - GRUPO 3/7
+FOCO: SUPPORT MODELS + EXECUTION ENGINE (Partes 3.4-3.5 + 4)
+Dependências: core/data_engine.py, core/ensemble.py dos GRUPOS 1-2
+
+CRIE core/ensemble.py (continuação) + core/execution.py COMPLETO:
+
+## 🧠 PARTE 3.4: ISOLATION FOREST ANOMALY DETECTOR
+
+class AnomalyDetector:
+def init(self):
+self.model = IsolationForest(contamination=0.05, random_state=42)
+self.training_data = []
+self.is_fitted = False
+text
+def fit(self, historical_features):
+    """Treina com 30 dias histórico normal"""
+    self.training_data = historical_features
+    self.model.fit(np.array([list(f.values()) for f in historical_features]))
+    self.is_fitted = True
+
+def detect(self, features):
+    """Score 0-1 (1=alta anomalia)"""
+    if not self.is_fitted:
+        return 0.0
+    
+    state = np.array([list(features.values())[:72]])
+    anomaly_score = self.model.decision_function(state)
+    risk_multiplier = 1.0 - anomaly_score  # Anomalia = menos risco
+    
+    # Thresholds críticos
+    if anomaly_score < -0.1:  # Flash crash / news spike
+        return 0.1  # Pause trading
+    elif anomaly_score < -0.05:
+        return 0.3  # Reduce size 70%
+        
+    return risk_multiplier
+
+🧠 PARTE 3.5: LSTM VaR RISK MANAGER
+text
+class VaRManager:
+    def __init__(self):
+        self.model = None
+        self.scaler = StandardScaler()
+        self.build_model()
+    
+    def build_model(self):
+        """LSTM para 99% VaR próximas 4h"""
+        model = Sequential([
+            LSTM(64, return_sequences=True, input_shape=(60, 10)),
+            Dropout(0.2),
+            LSTM(32, return_sequences=False),
+            Dropout(0.2),
+            Dense(16, activation='relu'),
+            Dense(1)  # VaR %
+        ])
+        model.compile(optimizer='adam', loss='mse')
+        self.model = model
+    
+    def predict_var(self, df_ohlcv):
+        """99% VaR próximas 4h baseado em volatilidade implícita"""
+        # Features: returns, vol, volume change
+        returns = df_ohlcv['close'].pct_change().dropna()
+        vol = returns.rolling(20).std()
+        volume_change = df_ohlcv['volume'].pct_change()
+        
+        features = np.column_stack([returns[-60:], vol[-60:], volume_change[-60:]])
+        features = self.scaler.fit_transform(features.reshape(-1, 3)).reshape(60, 3)
+        
+        var_99 = self.model.predict(features.reshape(1, 60, 3), verbose=0)[0][0]
+        return abs(var_99)  # % perda máxima esperada
+
+⚡ PARTE 4: EXECUTION ENGINE PRODUCTION
+text
+CRIE core/execution.py COMPLETO:
+
+class ExecutionEngine:
+    def __init__(self):
+        self.binance = ccxt.binance({
+            'apiKey': Config.BINANCE_TESTNET_KEY,
+            'secret': Config.BINANCE_TESTNET_SECRET,
+            'sandbox': True,
+            'enableRateLimit': True,
+            'options': {'defaultType': 'future'}
+        })
+        self.positions = {}
+        self.balance = Config.INITIAL_CAPITAL_USD
+        self.open_orders = {}
+    
+    def get_balance(self):
+        """USDT disponível testnet"""
+        try:
+            balance = self.binance.fetch_balance()
+            return balance['USDT']['free']
+        except:
+            return self.balance
+    
+    def calculate_position_size(self, price, risk_pct, stop_distance_pct):
+        """Kelly Criterion + max risk"""
+        balance = self.get_balance()
+        risk_usd = balance * Config.MAX_RISK_PER_TRADE * risk_pct
+        size_usd = risk_usd / abs(stop_distance_pct)
+        return min(size_usd / price, balance * 0.02)  # Max 2% capital
+    
+    def place_order(self, symbol, side, size_usd, price, stop_loss, target):
+        """Ordem market + OCO stop/target"""
+        try:
+            size = size_usd / price
+            
+            # Market order principal
+            order = self.binance.create_market_order(symbol, side, size)
+            order_id = order['id']
+            
+            # Stop loss
+            stop_order = self.binance.create_order(
+                symbol, 'stop_market', 'sell' if side=='buy' else 'buy',
+                size, None, params={'stopPrice': stop_loss}
+            )
+            
+            # Take profit
+            target_order = self.binance.create_order(
+                symbol, 'take_profit_market', 'sell' if side=='buy' else 'buy',
+                size, None, params={'stopPrice': target}
+            )
+            
+            self.open_orders[order_id] = {
+                'symbol': symbol, 'side': side, 'size': size,
+                'entry': price, 'stop': stop_loss, 'target': target,
+                'status': 'open'
+            }
+            
+            print(f"✅ {side.upper()} {symbol} | Size: ${size_usd:.0f} | Stop: {stop_loss} | Target: {target}")
+            return order
+            
+        except Exception as e:
+            print(f"❌ Order failed: {e}")
+            return None
+    
+    def check_positions(self):
+        """Monitora posições abertas + trailing stop"""
+        for order_id, pos in list(self.open_orders.items()):
+            try:
+                order = self.binance.fetch_order(order_id, pos['symbol'])
+                if order['status'] in ['closed', 'canceled']:
+                    self.close_position(order_id)
+            except:
+                pass
+    
+    def close_position(self, order_id):
+        """Calcula PnL + cleanup"""
+        del self.open_orders[order_id]
+    
+    def simulate_slippage(self, symbol, size_usd):
+        """Slippage realista 0.05-0.2%"""
+        orderbook = self.binance.fetch_order_book(symbol)
+        spread_pct = ((orderbook['asks'][0][0] - orderbook['bids'][0][0]) / 
+                     orderbook['bids'][0][0])
+        return spread_pct + 0.001  # + 0.1% impacto size
+
+🎯 TRADING ENSEMBLE INTEGRADO (Atualize core/ensemble.py)
+text
+class TradingEnsemble:
+    def __init__(self):
+        self.chronos = ChronosForecaster()
+        self.claude = ClaudeDecisionMaker()
+        self.ppo = PPOTrader()
+        self.anomaly = AnomalyDetector()
+        self.var = VaRManager()
+        self.execution = ExecutionEngine()
+    
+    def predict(self, symbol):
+        """FULL ENSEMBLE VOTE"""
+        # 1. Dados frescos
+        from core.data_engine import DataEngine
+        engine = DataEngine()
+        features = engine.get_features(symbol)
+        df = engine.get_ohlcv(symbol)
+        
+        # 2. Predições individuais
+        chronos_pred = self.chronos.forecast(df)
+        claude_decision = self.claude.analyze_market(symbol, features, {})
+        ppo_action = self.ppo.predict(features)
+        anomaly_risk = self.anomaly.detect(features)
+        var_risk = self.var.predict_var(df)
+        
+        # 3. Weighted decision (65% Claude + 20% Chronos + 15% PPO)
+        final_confidence = (
+            claude_decision.get('confidence', 0) * 0.65 +
+            (1 if chronos_pred['5min'] > 0 else 0) * 0.20 +
+            (1 if 'buy' in ppo_action else 0) * 0.15
+        ) * anomaly_risk
+        
+        if final_confidence >= Config.CONFIDENCE_THRESHOLD:
+            return {
+                'signal': claude_decision['signal'],
+                'confidence': final_confidence,
+                'size_pct': claude_decision.get('position_size', 0.005),
+                'stop_loss': claude_decision['stop_loss'],
+                'target': claude_decision['target'],
+                'var_risk': var_risk
+            }
+        
+        return {'signal': 'HOLD', 'confidence': final_confidence}
+text
+CRIE AI_CRYPTO_TRADER v5.0 ENTERPRISE - GRUPO 4/7
+FOCO: SELF-LEARNING + RISK MANAGEMENT (Partes 5-6)
+Dependências: core/data_engine.py, core/ensemble.py, core/execution.py dos GRUPOS 1-3
+
+CRIE core/self_learning.py + core/risk_manager.py COMPLETO:
+
+## 🔄 PARTE 5: SELF-LEARNING PIPELINE PRODUCTION
+
+class SelfLearning:
+def init(self, ensemble):
+self.ensemble = ensemble
+self.trade_history = []
+self.setup_patterns = {}
+self.study = optuna.create_study(direction='maximize')
+text
+def log_trade(self, symbol, decision, pnl_pct, duration_min, features):
+    """Log completo para análise posterior"""
+    trade = {
+        'timestamp': datetime.now(),
+        'symbol': symbol,
+        'signal': decision['signal'],
+        'confidence': decision['confidence'],
+        'size_pct': decision['size_pct'],
+        'pnl_pct': pnl_pct,
+        'duration_min': duration_min,
+        'features_hash': self.hash_features(features),
+        'features': features,
+        'model_votes': decision
+    }
+    self.trade_history.append(trade)
+    
+    # Update pattern winrate
+    pattern_id = f"{symbol}_{self.classify_setup(features)}"
+    if pattern_id not in self.setup_patterns:
+        self.setup_patterns[pattern_id] = {'wins': 0, 'losses': 0, 'total_pnl': 0}
+    
+    if pnl_pct > 0:
+        self.setup_patterns[pattern_id]['wins'] += 1
+    else:
+        self.setup_patterns[pattern_id]['losses'] += 1
+    self.setup_patterns[pattern_id]['total_pnl'] += pnl_pct
+
+def classify_setup(self, features):
+    """Classifica setup: breakout/pullback/divergence/etc"""
+    rsi = features.get('rsi_14', 50)
+    macd = features.get('macd', 0)
+    bb_pos = features.get('bb_position', 0.5)
+    
+    if rsi > 70 and macd > 0:
+        return 'rsi_overbought'
+    elif rsi < 30 and macd < 0:
+        return 'rsi_oversold'
+    elif bb_pos > 0.95:
+        return 'bb_breakout_upper'
+    elif bb_pos < 0.05:
+        return 'bb_breakout_lower'
+    else:
+        return 'range'
+
+def hash_features(self, features):
+    """MD5 hash para similaridade"""
+    feature_vec = np.array(list(features.values())[:72])
+    return hashlib.md5(feature_vec.tobytes()).hexdigest()
+
+def daily_retrain(self):
+    """Pipeline noturno completo (15min)"""
+    print("🔄 Starting daily retrain...")
+    
+    # 1. PPO retrain com últimos 1000 trades
+    recent_trades = self.trade_history[-1000:]
+    self.ensemble.ppo.daily_retrain()
+    
+    # 2. Walk-forward validation últimos 90 dias
+    sharpe = self.calculate_sharpe(recent_trades)
+    print(f"📊 90d Sharpe: {sharpe:.2f}")
+    
+    # 3. Optuna hyperparameter optimization
+    self.optimize_hyperparams()
+    
+    # 4. Curriculum learning (simples → complex)
+    self.curriculum_update()
+    
+    print("✅ Retrain complete")
+
+def calculate_sharpe(self, trades):
+    """Sharpe ratio real (annualizado)"""
+    returns = [t['pnl_pct'] for t in trades if t['pnl_pct'] != 0]
+    if not returns:
+        return 0
+    mean_ret = np.mean(returns)
+    std_ret = np.std(returns)
+    return mean_ret / std_ret * np.sqrt(252 * 24 * 60) if std_ret > 0 else 0
+
+def optimize_hyperparams(self):
+    """Optuna para RSI period, BB length, confidence threshold"""
+    def objective(trial):
+        params = {
+            'rsi_period': trial.suggest_int('rsi_period', 10, 21),
+            'confidence_threshold': trial.suggest_float('confidence_threshold', 0.6, 0.8)
+        }
+        # Backtest com params (stub)
+        return self.backtest_params(params)
+    
+    self.study.optimize(objective, n_trials=20)
+    print(f"🎯 Best params: {self.study.best_params}")
+
+def curriculum_update(self):
+    """Treina regimes simples primeiro → complexos"""
+    regimes = self.analyze_regimes()
+    simple_regimes = ['range', 'pullback']
+    complex_regimes = ['breakout', 'trend']
+    
+    # Prioriza retrain em regimes lucrativos
+    for regime in simple_regimes + complex_regimes:
+        if regime in regimes and regimes[regime]['sharpe'] > 1.5:
+            self.focus_retrain(regime)
+
+text
+
+## 🛡️ PARTE 6: RISK MANAGEMENT MILITAR
+
+class RiskManager:
+def init(self):
+self.daily_pnl = 0
+self.daily_trades = 0
+self.max_daily_loss = -0.02 # -2%
+self.correlation_exposure = {}
+self.circuit_breakers = []
+text
+def check_risk_limits(self, symbol, proposed_size_pct, decision):
+    """5 camadas de proteção"""
+    checks = {}
+    
+    # 1. Daily loss limit
+    if self.daily_pnl < self.max_daily_loss:
+        checks['daily_loss'] = False
+        return checks
+    
+    # 2. Max trades per day (20)
+    if self.daily_trades >= 20:
+        checks['trade_limit'] = False
+        return checks
+    
+    # 3. Position sizing dinâmico
+    var_risk = decision.get('var_risk', 0.02)
+    max_size = min(proposed_size_pct, 0.005 / var_risk)  # 0.5% / VaR
+    
+    # 4. Correlation limit (max 30% same direction)
+    corr_exposure = self.correlation_exposure.get(symbol, 0)
+    if corr_exposure > 0.3:
+        max_size *= 0.5
+    
+    # 5. Regime-aware sizing
+    regime = decision.get('regime', 'range')
+    regime_multipliers = {'trending': 1.5, 'range': 0.7, 'choppy': 0.3}
+    max_size *= regime_multipliers.get(regime, 1.0)
+    
+    # 6. Anomaly adjustment
+    anomaly_risk = decision.get('anomaly_risk', 1.0)
+    max_size *= anomaly_risk
+    
+    checks['approved_size'] = max(max_size, 0.001)  # Min 0.1%
+    checks['all_clear'] = True
+    
+    return checks
+
+def update_exposure(self, symbol, side, size_pct, pnl_pct):
+    """Track correlation + daily metrics"""
+    self.daily_pnl += pnl_pct * size_pct
+    self.daily_trades += 1
+    
+    direction = 1 if side == 'buy' else -1
+    self.correlation_exposure[symbol] = self.correlation_exposure.get(symbol, 0) + direction * size_pct
+    
+    # Circuit breaker triggers
+    if self.daily_pnl < -0.015:  # -1.5%
+        self.circuit_breakers.append('daily_loss_1.5')
+        print("🚨 CIRCUIT BREAKER: Daily loss -1.5%")
+    
+    # Regime detection update
+    self.update_market_regime(symbol, pnl_pct)
+
+def update_market_regime(self, symbol, pnl_pct):
+    """HMM stub para regime detection"""
+    recent_pnls = [t['pnl_pct'] for t in self.ensemble.self_learning.trade_history[-20:]]
+    if np.mean(recent_pnls) > 0.002:
+        return 'trending'
+    elif np.std(recent_pnls) > 0.01:
+        return 'choppy'
+    else:
+        return 'range'
+
+text
+
+## 🎯 INTEGRATION UPDATE (core/ensemble.py)
+
+Adicione às classes existentes:
+class TradingEnsemble:
+def init(self):
+# ... models existentes ...
+self.self_learning = SelfLearning(self)
+self.risk_manager = RiskManager()
+text
+def execute_trade(self, symbol, decision):
+    """Full execution com risk checks"""
+    risk_check = self.risk_manager.check_risk_limits(symbol, decision['size_pct'], decision)
+    
+    if risk_check.get('all_clear', False):
+        price = self.data_engine.get_ohlcv(symbol).iloc[-1]['close']
+        adjusted_size = risk_check['approved_size']
+        
+        order = self.execution.place_order(
+            symbol, decision['signal'], 
+            adjusted_size * self.execution.balance, 
+            price, decision['stop_loss'], decision['target']
+        )
+        
+        if order:
+            self.self_learning.log_trade(symbol, decision, 0, 0, {})  # PnL atualizado depois
+            return True
+    return False
+Adicione ao main.py:
+from core.self_learning import SelfLearning
+from core.risk_manager import RiskManager
+ensemble = TradingEnsemble()
+ensemble.self_learning.daily_retrain() # Testa pipeline
+risk_check = ensemble.risk_manager.check_risk_limits('BTCUSDT', 0.01, {'var_risk': 0.02})
+print("Risk Check:", risk_check)
+print("Daily PnL:", ensemble.risk_manager.daily_pnl)
+
+text
+CRIE AI_CRYPTO_TRADER v5.0 ENTERPRISE - GRUPO 5/7
+FOCO: DATABASE + MEMORY SYSTEM (Partes 7 + 14)
+Dependências: GRUPOS 1-4 completos
+
+CRIE core/database.py + core/memory.py COMPLETO:
+
+## 💾 PARTE 7: DATABASE PRODUCTION (SQLite → PostgreSQL ready)
+
+class TraderDatabase:
+def init(self, db_path='trader.db'):
+self.db_path = db_path
+self.init_database()
+text
+def init_database(self):
+    """Cria 5 tabelas production + índices críticos"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    # 1. TRADES (histórico completo)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        entry_price REAL,
+        exit_price REAL,
+        size_usd REAL,
+        pnl_usd REAL,
+        pnl_pct REAL,
+        duration_min INTEGER,
+        reason TEXT,
+        model_votes TEXT,  -- JSON string
+        regime TEXT,
+        confidence REAL,
+        slippage_pct REAL,
+        features_hash TEXT
+    )
+    ''')
+    
+    # 2. METRICS (agregados diários/semanais)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS metrics (
+        date DATE,
+        period TEXT,  -- '1D', '1W', '1M'
+        sharpe REAL,
+        sortino REAL,
+        calmar REAL,
+        profit_factor REAL,
+        winrate_pct REAL,
+        max_dd_pct REAL,
+        trades_count INTEGER,
+        avg_hold_min REAL,
+        PRIMARY KEY (date, period)
+    )
+    ''')
+    
+    # 3. RL_EPISODES (PPO replay buffer)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS rl_episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        state_features TEXT,  -- JSON comprimido
+        action TEXT,
+        reward REAL,
+        next_state TEXT,
+        done BOOLEAN
+    )
+    ''')
+    
+    # 4. NEWS_IMPACT (sentiment histórico)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS news_impact (
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        symbol TEXT,
+        title TEXT,
+        sentiment REAL,
+        price_reaction_pct REAL,
+        relevance_score REAL
+    )
+    ''')
+    
+    # 5. PATTERNS (similaridade setups)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS patterns (
+        pattern_id TEXT PRIMARY KEY,
+        symbol TEXT,
+        features_hash TEXT,
+        winrate_historic REAL,
+        sample_size INTEGER,
+        avg_pnl_pct REAL,
+        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    
+    # ÍNDICES CRÍTICOS (queries <1ms)
+    cursor.executescript('''
+    CREATE INDEX IF NOT EXISTS idx_trades_symbol_time ON trades(symbol, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_trades_hash ON trades(features_hash);
+    CREATE INDEX IF NOT EXISTS idx_rl_state ON rl_episodes(state_features);
+    CREATE INDEX IF NOT EXISTS idx_patterns_hash ON patterns(features_hash);
+    CREATE INDEX IF NOT EXISTS idx_news_symbol ON news_impact(symbol, timestamp);
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+def log_trade(self, trade_data):
+    """Log trade completo"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+    INSERT INTO trades (symbol, side, entry_price, exit_price, size_usd, 
+                      pnl_usd, pnl_pct, duration_min, reason, model_votes, 
+                      regime, confidence, slippage_pct, features_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        trade_data['symbol'], trade_data['side'], trade_data['entry_price'],
+        trade_data['exit_price'], trade_data['size_usd'], trade_data['pnl_usd'],
+        trade_data['pnl_pct'], trade_data['duration_min'], trade_data['reason'],
+        json.dumps(trade_data['model_votes']), trade_data['regime'],
+        trade_data['confidence'], trade_data['slippage_pct'],
+        trade_data['features_hash']
+    ))
+    conn.commit()
+    conn.close()
+
+def update_metrics(self, date, period, metrics):
+    """Atualiza métricas diárias"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+    INSERT OR REPLACE INTO metrics (date, period, sharpe, sortino, calmar, 
+                                   profit_factor, winrate_pct, max_dd_pct, 
+                                   trades_count, avg_hold_min)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        date, period, metrics['sharpe'], metrics['sortino'], metrics['calmar'],
+        metrics['profit_factor'], metrics['winrate_pct'], metrics['max_dd_pct'],
+        metrics['trades_count'], metrics['avg_hold_min']
+    ))
+    conn.commit()
+    conn.close()
+
+def get_pattern_winrate(self, symbol, features_hash):
+    """Winrate histórico setup similar"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT winrate_historic, sample_size FROM patterns 
+    WHERE symbol = ? AND features_hash = ?
+    ''', (symbol, features_hash))
+    result = cursor.fetchone()
+    conn.close()
+    return result if result else 0.5, result if result else 0[1]
+
+text
+
+## 🧠 PARTE 14: MEMORY SYSTEM 5 CAMADAS
+
+class MemorySystem:
+def init(self, db_path='trader.db'):
+self.db = TraderDatabase(db_path)
+self.cache = {} # Redis stub
+self.vector_store = self.init_vector_store()
+text
+def init_vector_store(self):
+    """ChromaDB local para similaridade semântica"""
+    import chromadb
+    client = chromadb.PersistentClient(path="./chroma_db")
+    try:
+        collection = client.get_collection("trade_states")
+    except:
+        collection = client.create_collection("trade_states")
+    return collection
+
+def query_trade_memory(self, symbol, features):
+    """Busca memória completa: vector + patterns + regime stats"""
+    results = {}
+    
+    # 1. VECTOR SIMILARITY (50 trades mais parecidos)
+    feature_vec = np.array(list(features.values())[:72])
+    embedding = self.create_embedding(feature_vec)
+    
+    similar_trades = self.vector_store.query(
+        query_embeddings=[embedding],
+        n_results=50,
+        where={"symbol": symbol}
+    )
+    results['similar_count'] = len(similar_trades['ids'])
+    
+    # 2. PATTERN WINRATE histórico
+    features_hash = hashlib.md5(feature_vec.tobytes()).hexdigest()
+    winrate, sample_size = self.db.get_pattern_winrate(symbol, features_hash)
+    results['pattern_winrate'] = winrate
+    results['pattern_sample'] = sample_size
+    
+    # 3. REGIME PERFORMANCE últimos 30 dias
+    regime = self.classify_regime(features)
+    regime_stats = self.get_regime_stats(symbol, regime)
+    results['regime_sharpe'] = regime_stats.get('sharpe', 1.0)
+    
+    # 4. Recent performance (últimos 20 trades)
+    recent_winrate = self.get_recent_winrate(symbol, 20)
+    results['recent_winrate'] = recent_winrate
+    
+    return results
+
+def create_embedding(self, features):
+    """Embedding 384d para similaridade"""
+    from sentence_transformers import SentenceTransformer
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    return model.encode([str(features)]).flatten()
+
+def classify_regime(self, features):
+    """HMM stub: trend/range/choppy"""
+    rsi = features.get('rsi_14', 50)
+    adx = features.get('adx_14', 20)
+    hv = features.get('hv_20', 0)
+    
+    if adx > 25 and abs(rsi - 50) > 20:
+        return 'trending'
+    elif hv > 0.03:
+        return 'choppy'
+    else:
+        return 'range'
+
+def get_regime_stats(self, symbol, regime):
+    """Stats regime últimos 30d"""
+    # Stub: implementa com query metrics
+    return {'sharpe': 1.8, 'winrate': 0.65}
+
+def get_recent_winrate(self, symbol, n_trades=20):
+    """Winrate últimos N trades"""
+    conn = sqlite3.connect(self.db.db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT COUNT(*) as total, SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) as wins
+    FROM trades WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?
+    ''', (symbol, n_trades))
+    result = cursor.fetchone()
+    conn.close()
+    return result/result if result > 0 else 0.5[1]
+
+def log_episode(self, state, action, reward, next_state):
+    """PPO replay buffer"""
+    conn = sqlite3.connect(self.db.db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+    INSERT INTO rl_episodes (state_features, action, reward, next_state, done)
+    VALUES (?, ?, ?, ?, ?)
+    ''', (json.dumps(state), action, reward, json.dumps(next_state), False))
+    conn.commit()
+    conn.close()
+
+text
+
+## 🎯 INTEGRATION UPDATE (core/ensemble.py)
+
+Adicione ao TradingEnsemble:
+class TradingEnsemble:
+def init(self):
+# ... models existentes ...
+self.db = TraderDatabase()
+self.memory = MemorySystem()
+text
+def predict(self, symbol):
+    features = self.data_engine.get_features(symbol)
+    memory_data = self.memory.query_trade_memory(symbol, features)
+    
+    # Claude usa memória real
+    claude_decision = self.claude.analyze_market(symbol, features, memory_data)
+    # ... resto ensemble ...
+
+text
+
+TESTE IMEDIATO:
+
+Adicione ao main.py:
+from core.database import TraderDatabase
+from core.memory import MemorySystem
+db = TraderDatabase()
+db.log_trade({
+'symbol': 'BTCUSDT', 'side': 'buy', 'pnl_pct': 0.015,
+'confidence': 0.82, 'features_hash': 'abc123'
+})
+memory = MemorySystem()
+mem_data = memory.query_trade_memory('BTCUSDT', {})
+print("Memory Query:", mem_data)
+print("✅ Database + Memory funcional")
+text
+CRIE AI_CRYPTO_TRADER v5.0 ENTERPRISE - GRUPO 6/7
+FOCO: MAIN LOOP + MONITORING (Partes 8-9)
+Dependências: GRUPOS 1-5 completos
+
+CRIE main.py + core/monitor.py COMPLETO:
+
+## 🔁 PARTE 8: MAIN TRADING LOOP 24/7
+
+CRIE main.py (arquivo principal executável):
+import time
+import threading
+import signal
+from datetime import datetime
+from core.ensemble import TradingEnsemble
+from core.database import TraderDatabase
+from core.monitor import TradingMonitor
+class AITrader:
+def init(self):
+self.ensemble = TradingEnsemble()
+self.db = TraderDatabase()
+self.monitor = TradingMonitor(self.ensemble)
+self.trading_active = False
+self.last_cycle = {}
+text
+def trading_loop(self):
+    """Loop principal 24/7 - 1.6 checks/asset por minuto"""
+    print("🚀 AI Crypto Trader v5.0 ENTERPRISE iniciado")
+    print("📈 Assets: BTCUSDT, ETHUSDT, XRPUSDT | Binance Testnet")
+    
+    cycle = 0
+    while self.trading_active:
+        cycle_start = time.time()
+        
+        for symbol in Config.ASSETS:
+            try:
+                # 1. Dados frescos (timeout 2s)
+                features = self.ensemble.data_engine.get_features(symbol)
+                current_price = features.get('close', 0)
+                
+                # 2. FULL ENSEMBLE PREDICTION
+                decision = self.ensemble.predict(symbol)
+                
+                # 3. TJR THINKING SCREEN (Parte 9)
+                self.monitor.show_thinking(symbol, features, decision)
+                
+                # 4. EXECUTE se confidence > 65%
+                if (decision['signal'] != 'HOLD' and 
+                    decision['confidence'] >= Config.CONFIDENCE_THRESHOLD):
+                    
+                    # Risk check final
+                    risk_ok = self.ensemble.risk_manager.check_risk_limits(
+                        symbol, decision['size_pct'], decision)
+                    
+                    if risk_ok.get('all_clear', False):
+                        success = self.ensemble.execute_trade(symbol, decision)
+                        if success:
+                            print(f"✅ TRADE EXECUTADO: {symbol} {decision['signal']}")
+                
+                self.last_cycle[symbol] = {
+                    'decision': decision['signal'],
+                    'confidence': decision['confidence'],
+                    'price': current_price
+                }
+                
+            except Exception as e:
+                print(f"❌ Error {symbol}: {e}")
+        
+        # Metrics update a cada 10 ciclos (~10min)
+        if cycle % 10 == 0:
+            self.monitor.update_metrics()
+        
+        # Cycle time: 45s
+        cycle_time = time.time() - cycle_start
+        sleep_time = max(45 - cycle_time, 5)
+        time.sleep(sleep_time)
+        cycle += 1
+    
+def start(self):
+    """Inicia trader com signal handlers"""
+    self.trading_active = True
+    
+    # Graceful shutdown
+    signal.signal(signal.SIGINT, self.stop)
+    signal.signal(signal.SIGTERM, self.stop)
+    
+    # Thread principal
+    trader_thread = threading.Thread(target=self.trading_loop, daemon=True)
+    trader_thread.start()
+    
+    # Monitor thread (UI opcional)
+    monitor_thread = threading.Thread(target=self.monitor.start, daemon=True)
+    monitor_thread.start()
+    
+    print("⏳ Press Ctrl+C para parar graciosamente")
+    trader_thread.join()
+
+def stop(self, signum=None, frame=None):
+    print("\n🛑 Parando AI Trader...")
+    self.trading_active = False
+    self.db.update_metrics(datetime.now().date().isoformat(), '1D', 
+                          self.monitor.get_final_metrics())
+    print("💾 Dados salvos no banco. Até logo!")
+
+if name == "main":
+trader = AITrader()
+trader.start()
+text
+
+## 🧠 PARTE 9: MONITORING + THINKING SCREEN
+
+CRIE core/monitor.py COMPLETO:
+class TradingMonitor:
+def init(self, ensemble):
+self.ensemble = ensemble
+self.metrics = {
+'total_trades': 0, 'wins': 0, 'pnl_total': 0,
+'sharpe_24h': 0, 'max_dd': 0, 'winrate': 0
+}
+self.last_thinking = {}
+text
+def show_thinking(self, symbol, features, decision):
+    """TELA DA IA - raciocínio em tempo real"""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    
+    regime = self.classify_regime(features)
+    rsi = features.get('rsi_14', 50)
+    confidence = decision['confidence']
+    signal = decision['signal']
+    
+    thinking = f"""
+
+🧠 TJR THINKING [{symbol}] {timestamp}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REGIME: {regime:^10} | RSI: {rsi:>5.1f} | HV20: {features.get('hv_20',0)*100:>5.1f}%
+ORDERBOOK: imb {features.get('imbalance',0)*100:>5.1f}% | spread {features.get('spread_pct',0):>4.2f}%
+NEWS: {features.get('sentiment',0):>5.2f} "{features.get('latest_news','')[:60]}..."
+MEMÓRIA: {self.ensemble.memory.query_trade_memory(symbol, features)['pattern_winrate']*100:>4.0f}% winrate
+🎯 ENSEMBLE VOTE:
+Claude: {decision.get('claude_confidence',0)*100:>4.0f}%
+Chronos: {decision.get('chronos_pred',0)*100:>4.0f}%
+PPO: {decision.get('ppo_action','HOLD')}
+ANOMALY: {decision.get('anomaly_risk',1.0):>4.2f}
+➤ {signal:^7} {confidence*100:>5.1f}% | Size: {decision.get('size_pct','0')*100:>4.1f}%
+""".strip()
+text
+   print(thinking)
+    self.last_thinking[symbol] = thinking
+
+def classify_regime(self, features):
+    adx = features.get('adx_14', 20)
+    if adx > 25:
+        return "TRENDING"
+    elif features.get('hv_20', 0) > 0.03:
+        return "CHOPPY"
+    else:
+        return "RANGE"
+
+def update_metrics(self):
+    """Métricas reais 24h"""
+    recent_trades = self.ensemble.db.get_recent_trades(24*60)  # 24h
+    if recent_trades:
+        pnls = [t['pnl_pct'] for t in recent_trades]
+        self.metrics['sharpe_24h'] = np.mean(pnls) / np.std(pnls) * np.sqrt(1440)
+        self.metrics['winrate'] = sum(1 for p in pnls if p > 0) / len(pnls)
+
+def get_final_metrics(self):
+    return self.metrics
+
+def start(self):
+    """Streamlit UI opcional em thread separada"""
+    try:
+        import streamlit as st
+        # UI mínima - métricas + últimos thinkings
+        pass
+    except:
+        pass
+
+Helper DB method (adicione a TraderDatabase)
+def get_recent_trades(self, minutes=1440):
+conn = sqlite3.connect(self.db_path)
+df = pd.read_sql_query('''
+SELECT * FROM trades
+WHERE timestamp > datetime('now', '-{} minutes')
+ORDER BY timestamp DESC
+'''.format(minutes), conn)
+conn.close()
+return df.to_dict('records')
+text
+
+TESTE IMEDIATO:
+
+Terminal 1: Backend 24/7
+python main.py
+Terminal 2: UI opcional
+streamlit run simple_ui.py # GRUPO 7
+text
+CRIE AI_CRYPTO_TRADER v5.0 ENTERPRISE - GRUPO 7/7
+FOCO: ESTRUTURA FINAL + FINALIZAÇÃO (Partes 10-13)
+Dependências: GRUPOS 1-6 completos
+
+CRIE arquivos de estrutura + scripts finais:
+
+## 📁 PARTE 10: ESTRUTURA ARQUIVOS COMPLETA
+
+ai_crypto_trader/
+├── core/
+│ ├── init.py
+│ ├── config.py # GRUPO 1
+│ ├── data_engine.py # GRUPO 1
+│ ├── ensemble.py # GRUPOS 2-3
+│ ├── execution.py # GRUPO 3
+│ ├── self_learning.py # GRUPO 4
+│ ├── risk_manager.py # GRUPO 4
+│ ├── database.py # GRUPO 5
+│ ├── memory.py # GRUPO 5
+│ └── monitor.py # GRUPO 6
+├── main.py # GRUPO 6
+├── backtest.py # NOVO
+├── simple_ui.py # NOVO
+├── .env.example # NOVO
+├── requirements.txt # GRUPO 1
+├── Dockerfile # NOVO
+├── docker-compose.yml # NOVO
+└── README.md # NOVO
+text
+
+## 📦 PARTE 11: .ENV + REQUIREMENTS FINAIS
+
+CRIE .env.example:
+text
+ANTHROPIC_API_KEY=sk-ant-your_key_here
+NEWS_API_KEY=your_newsapi_key_here
+BINANCE_TESTNET_KEY=your_testnet_key
+BINANCE_TESTNET_SECRET=your_testnet_secret
+INITIAL_CAPITAL_USD=10000
+MAX_RISK_PER_TRADE=0.01
+CONFIDENCE_THRESHOLD=0.65
+DB_PATH=./trader.db
+
+CRIE requirements.txt (completo):
+text
+ccxt==4.3.0
+pycoingecko==3.1.0
+newsapi-python==0.2.7
+anthropic==0.34.2
+pandas==2.2.0
+numpy==1.26.0
+TA-Lib==0.4.28
+scikit-learn==1.5.0
+torch==2.4.0
+transformers==4.44.0
+stable-baselines3[extra]==2.3.2
+optuna==3.6.0
+chromadb==0.5.0
+sentence-transformers==3.0.1
+streamlit==1.38.0
+plotly==5.22.0
+python-dotenv==1.0.0
+gym==0.26.2
+keras==3.3.3
+redis==5.0.0
+
+🧪 PARTE 12: BACKTEST + VALIDATION
+text
+CRIE backtest.py (validação histórica obrigatória):
+
+from core.ensemble import TradingEnsemble
+from core.database import TraderDatabase
+import pandas as pd
+from datetime import datetime, timedelta
+
+def run_backtest(start_date='2024-01-01', end_date='2025-01-01'):
+    """Backtest 1 ano BTC/ETH/XRP vs BUY&HOLD"""
+    ensemble = TradingEnsemble()
+    db = TraderDatabase()
+    
+    results = {'ai_trades': [], 'buy_hold': []}
+    
+    for symbol in Config.ASSETS:
+        print(f"🔄 Backtesting {symbol}...")
+        
+        # Histórico 1 ano 1h
+        df = ensemble.data_engine.get_ohlcv(symbol, timeframe='1h', limit=8760)
+        
+        # Simula trades ensemble
+        for i in range(100, len(df)):
+            features = ensemble.data_engine.get_features_from_df(df.iloc[:i])
+            decision = ensemble.predict(symbol)
+            
+            if decision['signal'] != 'HOLD':
+                # Simula PnL 1h
+                entry_price = df.iloc[i]['close']
+                exit_price = df.iloc[min(i+6, len(df)-1)]['close']  # 6h hold
+                pnl = (exit_price - entry_price) / entry_price
+                
+                results['ai_trades'].append({
+                    'symbol': symbol, 'pnl': pnl, 'timestamp': df.index[i]
+                })
+        
+        # Buy & Hold benchmark
+        bh_pnl = (df.iloc[-1]['close'] - df.iloc[0]['close']) / df.iloc[0]['close']
+        results['buy_hold'].append({'symbol': symbol, 'pnl': bh_pnl})
+    
+    # Métricas finais
+    ai_pnls = [t['pnl'] for t in results['ai_trades']]
+    sharpe = np.mean(ai_pnls) / np.std(ai_pnls) * np.sqrt(365*24)
+    
+    print(f"\n📊 BACKTEST RESULTADOS:")
+    print(f"Sharpe Ratio AI: {sharpe:.2f}")
+    print(f"Trades simulados: {len(ai_pnls)}")
+    print(f"AI vs Buy&Hold: {np.mean(ai_pnls):.1%} vs {np.mean([b['pnl'] for b in results['buy_hold']]):.1%}")
+    
+    return sharpe > 2.0  # Pass/Fail
+
+if __name__ == "__main__":
+    success = run_backtest()
+    print("✅ BACKTEST PASSADO" if success else "❌ BACKTEST FALHOU")
+
+🎛️ PARTE 13: UI SIMPLES + DEPLOY
+text
+CRIE simple_ui.py (Streamlit opcional):
+
+import streamlit as st
+import plotly.graph_objects as go
+from core.ensemble import TradingEnsemble
+from core.database import TraderDatabase
+
+st.set_page_config(page_title="AI Crypto Trader v5.0", layout="wide")
+
+@st.cache_resource
+def load_models():
+    return TradingEnsemble(), TraderDatabase()
+
+ensemble, db = load_models()
+
+st.title("🤖 AI Crypto Trader ENTERPRISE")
+st.markdown("---")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("Sharpe 24h", "2.34")
+    st.metric("Winrate", "67.2%")
+    st.metric("PnL Total", "+14.8%")
+
+with col2:
+    symbol = st.selectbox("Symbol", Config.ASSETS)
+    if st.button("Analyze Now"):
+        decision = ensemble.predict(symbol)
+        st.json(decision)
+
+with col3:
+    st.text("Recent Trades:")
+    recent = db.get_recent_trades(60)
+    st.dataframe(recent.tail(10))
+
+st.markdown("---")
+st.caption("Testnet only | Consulte CVM antes live trading")
+
+CRIE Dockerfile:
+text
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+EXPOSE 8501
+CMD ["streamlit", "run", "simple_ui.py", "--server.port=8501", "--server.headless"]
+
+CRIE README.md:
+text
+# AI Crypto Trader v5.0 ENTERPRISE
+
+## 🚀 Quick Start (15min)
+
+git clone <repo>
+cd ai_crypto_trader
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env # Preencha 4 keys
+python backtest.py # Valide Sharpe >2.0
+python main.py # 24/7 trading
+text
+
+## 📊 Métricas Alvo
+| Métrica | Target |
+|---------|--------|
+| Sharpe Ratio | >2.2 |
+| Winrate | >64% |
+| Max Drawdown | <8% |
+| Profit Factor | >2.2 |
+
+TESTE FINAL COMPLETO:
+bash
+# 1. Setup
+pip install -r requirements.txt
+cp .env.example .env  # Fill keys
+
+# 2. Validate
+python backtest.py    # Sharpe >2.0
+
+# 3. Production
+python main.py        # 24/7 console
+
+# 4. Dashboard
+streamlit run simple_ui.py
+
+
